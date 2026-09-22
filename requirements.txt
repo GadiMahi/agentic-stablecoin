@@ -1,0 +1,14 @@
+# Core ML — versions the published artefacts were trained under are noted inline.
+scikit-learn>=1.8        # artefacts pickled under 1.8.0
+xgboost>=2.0
+numpy>=1.26
+pandas>=2.0
+joblib>=1.3
+
+# Serving
+fastapi>=0.110
+uvicorn[standard]>=0.27
+websockets>=12.0
+
+# Dev
+pytest>=8.0
