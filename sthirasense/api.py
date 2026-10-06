@@ -48,6 +48,12 @@ ENSEMBLE: Optional[DepegEnsemble] = None
 STORE: Optional[AuditStore] = None
 SESSION: Optional["Session"] = None
 
+# Subscribers are tracked at module level, not on the session. Clients connect
+# as soon as the page loads — typically before any session exists — so binding
+# the set to a session means those sockets are never registered and the live
+# stream silently never reaches them.
+CLIENTS: Set[WebSocket] = set()
+
 
 # ---------------------------------------------------------------------------
 # Session
@@ -64,7 +70,6 @@ class Session:
         self.feed = MarketFeed(scenario, seed=seed)
         self.run_id = STORE.start_run(scenario, seed, ENSEMBLE.threshold)
         self.agent = DepegAgent(ENSEMBLE, self.feed, on_dispatch=self._on_dispatch)
-        self.clients: Set[WebSocket] = set()
         self.task: Optional[asyncio.Task] = None
         self.last_tick: Optional[Dict[str, Any]] = None
         self.series: List[Dict[str, Any]] = []     # downsampled chart history
@@ -137,17 +142,7 @@ class Session:
             await self.broadcast({"type": "error", "message": "session loop failed"})
 
     async def broadcast(self, msg: Dict[str, Any]) -> None:
-        if not self.clients:
-            return
-        text = json.dumps(msg, default=float)
-        dead = []
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(text)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+        await broadcast(msg)
 
     async def stop(self) -> None:
         self.finished = True
@@ -155,6 +150,20 @@ class Session:
             self.task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.task
+
+
+async def broadcast(msg: Dict[str, Any]) -> None:
+    if not CLIENTS:
+        return
+    text = json.dumps(msg, default=float)
+    dead = []
+    for ws in list(CLIENTS):
+        try:
+            await ws.send_text(text)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        CLIENTS.discard(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +233,11 @@ async def start_session(req: StartRequest) -> Dict[str, Any]:
     if req.scenario not in SCENARIOS:
         return JSONResponse({"error": f"unknown scenario {req.scenario!r}"}, status_code=400)
 
-    clients: Set[WebSocket] = set()
     if SESSION:
-        clients = SESSION.clients
         await SESSION.stop()
 
     s = Session(req.scenario, req.seed, req.speed)
-    s.clients = clients
+    await broadcast({"type": "warming", "scenario": req.scenario})
     await asyncio.to_thread(s.warm_up)
     s.task = asyncio.create_task(s.run())
     SESSION = s
@@ -291,11 +298,10 @@ def history() -> Dict[str, Any]:
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
-    if SESSION:
-        SESSION.clients.add(socket)
-        if SESSION.last_tick:
-            await socket.send_text(json.dumps(
-                {"type": "tick", "data": SESSION.last_tick}, default=float))
+    CLIENTS.add(socket)
+    if SESSION and SESSION.last_tick:
+        await socket.send_text(json.dumps(
+            {"type": "tick", "data": SESSION.last_tick}, default=float))
     try:
         while True:
             await socket.receive_text()          # keep-alive / client pings
@@ -304,8 +310,7 @@ async def ws(socket: WebSocket) -> None:
     except Exception:
         pass
     finally:
-        if SESSION:
-            SESSION.clients.discard(socket)
+        CLIENTS.discard(socket)
 
 
 # ---------------------------------------------------------------------------
