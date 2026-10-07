@@ -97,8 +97,11 @@ class DepegAgent:
         self.tools = ToolRegistry()
         self.tools.register("fetch_market_data", feed,
                             lambda r: "no data" if r is None else f"bar @ close={r['close']:.6f}")
-        self.tools.register("compute_features", self._tool_features,
-                            lambda r: "warming up" if r is None else f"{len(r)} features")
+        n_model_feats = len(ensemble.feature_cols)
+        self.tools.register(
+            "compute_features", self._tool_features,
+            lambda r: "warming up" if r is None else f"{n_model_feats} model features",
+        )
         self.tools.register("score_models", self._tool_score,
                             lambda r: f"p={r.depeg_proba:.3e} stress={r.stress:.1f}")
         self.tools.register("query_incident_memory", query_incident_memory,
