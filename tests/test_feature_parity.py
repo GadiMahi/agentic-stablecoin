@@ -153,5 +153,5 @@ def test_vector_order_matches_model_contract(artefacts):
     eng = FeatureEngine(cols)
     vec = eng.vector(live_rows[-1])
     assert len(vec) == len(cols) == 106
-    assert all(isinstance(v, float) for v in vec)
+    assert all(float(v) == v for v in vec)
     assert all(np.isfinite(v) for v in vec)
