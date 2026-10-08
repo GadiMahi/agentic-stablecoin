@@ -10,3 +10,4 @@ frontend/dist/
 .pytest_cache/
 .DS_Store
 data/*.csv
+*.tar.gz
