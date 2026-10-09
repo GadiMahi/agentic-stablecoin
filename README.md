@@ -34,8 +34,16 @@ This repository runs the genuine pipeline end to end. Specifically:
 | The agent genuinely decides | Every action is scored by expected utility and the full ranking is published to the UI, not just the winner |
 | The learning element genuinely learns | Cost weights move on resolved outcomes; every update is written to SQLite and shown in the dashboard |
 
-If you want to verify the central claim yourself, run `pytest tests/ -q`. 42 tests,
-no network, about a minute.
+Two ways to verify this yourself:
+
+```bash
+pytest tests/ -q          # 42 tests, no network, ~1 minute
+python verify_not_faked.py   # adversarial check, prints its reasoning
+```
+
+`verify_not_faked.py` is short enough to read aloud: it asserts the simulator's
+output schema contains no model-side field, scores a calm and a collapsing market
+through the same artefacts, and confirms the 106-column contract is met exactly.
 
 ---
 
