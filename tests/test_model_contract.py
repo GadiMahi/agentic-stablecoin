@@ -52,16 +52,41 @@ def test_rf_runs_in_thread(ens):
 
 
 def test_njobs_does_not_change_predictions(ens):
-    """Forcing in-thread evaluation is a performance change, not a behavioural one."""
+    """Forcing in-thread evaluation is a performance change, not a behavioural one.
+
+    Note on tolerance: joblib sums each tree's contribution in whatever order
+    the workers finish, and floating-point addition is not associative, so
+    n_jobs=-1 and n_jobs=1 can differ in the last bits. On Linux they happen to
+    come out bit-identical; on Windows they do not. Asserting bit-equality
+    therefore tests the threading backend, not our code.
+
+    What has to hold is that the difference is numerical noise and that no
+    decision flips because of it -- which is checked below through the full
+    ensemble, including the tuned threshold.
+    """
     rng = np.random.default_rng(3)
-    X = rng.normal(0, 1, (12, 106))
-    a = ens.rf.predict_proba(X)
+    X = rng.normal(0, 1, (64, 106))
+
+    ens.rf.n_jobs = 1
+    serial = ens.rf.predict_proba(X)
     ens.rf.n_jobs = -1
     try:
-        b = ens.rf.predict_proba(X)
+        parallel = ens.rf.predict_proba(X)
     finally:
         ens.rf.n_jobs = 1
-    assert np.allclose(a, b, atol=0, rtol=0)
+
+    # Agreement to within a few float64 ulps.
+    assert np.allclose(serial, parallel, rtol=1e-9, atol=1e-12), (
+        f"max abs diff {np.abs(serial - parallel).max():.3e} exceeds numerical noise")
+
+    # The claim that actually matters: identical decisions end to end.
+    xgb_p = ens.xgb.predict_proba(X)[:, 1]
+    p_serial = ens.meta.predict_proba(
+        ens.build_meta_features(serial[:, 1], xgb_p))[:, 1]
+    p_parallel = ens.meta.predict_proba(
+        ens.build_meta_features(parallel[:, 1], xgb_p))[:, 1]
+    assert np.array_equal(p_serial >= ens.threshold, p_parallel >= ens.threshold), (
+        "n_jobs changed an alert decision")
 
 
 def test_meta_feature_construction_order(ens):
