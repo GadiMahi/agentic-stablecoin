@@ -1,71 +1,35 @@
 import React from 'react'
-import { fmtNum, fmtProb } from '../lib/format.js'
-
-/** Scenario picker + transport controls. */
-export function Controls({ scenarios, selected, onSelect, onStart, onPause,
-                           onSpeed, running, paused, speed, busy }) {
-  return (
-    <>
-      <div className="scenario-grid">
-        {scenarios.map(s => (
-          <button key={s.key}
-                  className={`scenario${selected === s.key ? ' sel' : ''}`}
-                  onClick={() => onSelect(s.key)}>
-            <b>{s.name}</b>
-            <span>{s.description}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="controls" style={{ marginTop: 12 }}>
-        <button className="btn primary" onClick={onStart} disabled={busy}>
-          {busy ? 'Warming up…' : running ? 'Restart simulation' : 'Start simulation'}
-        </button>
-        <button className="btn" onClick={onPause} disabled={!running || busy}>
-          {paused ? 'Resume' : 'Pause'}
-        </button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8,
-                        fontSize: 12, color: 'var(--muted)' }}>
-          speed
-          <input type="range" min="2" max="240" step="2" value={speed}
-                 onChange={e => onSpeed(Number(e.target.value))}
-                 style={{ width: 120 }} />
-          <span className="stat-value" style={{ fontSize: 12, minWidth: 54 }}>
-            {speed}&#215; min/s
-          </span>
-        </label>
-      </div>
-    </>
-  )
-}
+import { fmtCompact, fmtNum, fmtProb } from '../lib/format.js'
 
 /** Alerts raised during this run, newest first. */
 export function Alerts({ alerts }) {
   if (!alerts || !alerts.length) {
-    return <div className="empty">No alerts raised. On a calm market this is the
-      correct outcome — the agent is supposed to stay quiet.</div>
+    return (
+      <div className="empty">
+        No alerts raised. On a calm market that is the correct outcome — the
+        agent is supposed to stay quiet.
+      </div>
+    )
   }
   return (
     <div className="rows">
       {alerts.map(a => {
-        const tag = a.outcome === 'TRUE_POSITIVE' ? 'tp'
-                  : a.outcome === 'FALSE_POSITIVE' ? 'fp' : 'open'
+        const cls = a.outcome === 'TRUE_POSITIVE' ? 'tp'
+                  : a.outcome === 'FALSE_POSITIVE' ? 'fp' : ''
         const label = a.outcome ? a.outcome.replace('_', ' ') : 'open'
         return (
           <div key={a.alert_id ?? a.id} className="row">
-            <div className="r-l" style={{ flexDirection: 'column', gap: 3 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                <strong style={{ fontSize: 12 }}>#{a.alert_id ?? a.id} {a.level}</strong>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+              <div style={{ display: 'flex', gap: 9, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <strong>#{a.alert_id ?? a.id} {a.level}</strong>
                 <code>p={fmtProb(a.probability)}</code>
                 <code>stress {fmtNum(a.stress, 1)}</code>
               </div>
-              {a.peak_dev != null && a.peak_dev > 0 && (
-                <code style={{ fontSize: 10.5 }}>
-                  peak deviation ${fmtNum(a.peak_dev, 5)}
-                </code>
+              {a.peak_dev > 0 && (
+                <code style={{ fontSize: 10.5 }}>peak deviation ${fmtNum(a.peak_dev, 5)}</code>
               )}
             </div>
-            <span className={`tag ${tag}`}>{label}</span>
+            <span className={`badge ${cls}`}>{label}</span>
           </div>
         )
       })}
@@ -80,7 +44,7 @@ export function ToolLog({ tools }) {
     <div className="rows">
       {[...tools].reverse().map((t, i) => (
         <div key={i} className="row">
-          <div className="r-l">
+          <div style={{ display: 'flex', gap: 9, alignItems: 'baseline', minWidth: 0 }}>
             <code style={{ fontWeight: 600 }}>{t.name}()</code>
             <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>{t.summary}</span>
           </div>
@@ -91,61 +55,95 @@ export function ToolLog({ tools }) {
   )
 }
 
-/** Cost weights and the track record that moves them. */
+/** Ensemble internals + the raw bar the models were given. */
+export function Ensemble({ pred, bar }) {
+  return (
+    <div className="split">
+      <div>
+        <p className="eyebrow" style={{ marginBottom: 10 }}>Model outputs</p>
+        <dl className="kv">
+          <dt>Random Forest</dt><dd>{pred ? fmtNum(pred.rf_proba, 4) : '—'}</dd>
+          <dt>XGBoost</dt><dd>{pred ? fmtNum(pred.xgb_proba, 4) : '—'}</dd>
+          <dt>Meta-learner</dt><dd>{pred ? fmtProb(pred.depeg_proba) : '—'}</dd>
+          <dt>Agreement (min)</dt><dd>{pred ? fmtNum(pred.agreement, 4) : '—'}</dd>
+          <dt>Disagreement</dt><dd>{pred ? fmtNum(pred.disagreement, 4) : '—'}</dd>
+          <dt>Past threshold</dt><dd>{pred ? (pred.breach ? 'yes' : 'no') : '—'}</dd>
+        </dl>
+      </div>
+      <div>
+        <p className="eyebrow" style={{ marginBottom: 10 }}>Raw bar in</p>
+        <dl className="kv">
+          <dt>Close</dt><dd>{bar ? bar.close.toFixed(5) : '—'}</dd>
+          <dt>Volume (1m)</dt><dd>{bar ? fmtCompact(bar.volume) : '—'}</dd>
+          <dt>Trades (1m)</dt><dd>{bar ? fmtNum(bar.trades, 0) : '—'}</dd>
+          <dt>Taker buy</dt><dd>{bar ? fmtCompact(bar.taker_base) : '—'}</dd>
+          <dt>Market cap</dt><dd>{bar ? '$' + fmtCompact(bar.market_cap) : '—'}</dd>
+          <dt>Supply</dt><dd>{bar ? fmtCompact(bar.circulating_supply) : '—'}</dd>
+        </dl>
+      </div>
+    </div>
+  )
+}
+
+/** Cost weights, track record, and the sensing economy. */
 export function Learning({ learning, status }) {
   const cm = learning?.cost_model || {}
   const st = learning?.stats || {}
   return (
-    <>
-      <dl className="kv">
-        <dt>Cost of a miss</dt><dd>{fmtNum(cm.miss_base, 0)}</dd>
-        <dt>Cost of a false alarm</dt><dd>{fmtNum(cm.false_base, 1)}</dd>
-        <dt>True positives</dt><dd>{st.true_positives ?? 0}</dd>
-        <dt>False positives</dt><dd>{st.false_positives ?? 0}</dd>
-        <dt>Missed breaches</dt><dd>{st.missed_breaches ?? 0}</dd>
-        <dt>Precision</dt>
-        <dd>{st.precision != null ? fmtNum(st.precision * 100, 1) + '%' : '—'}</dd>
-        <dt>Weight updates</dt><dd>{st.updates ?? 0}</dd>
-      </dl>
-      {status && (
-        <>
-          <div style={{ height: 1, background: 'var(--line)', margin: '12px 0' }} />
-          <dl className="kv">
-            <dt>Bars perceived</dt><dd>{status.ticks ?? 0}</dd>
-            <dt>Model invocations</dt><dd>{status.model_invocations ?? 0}</dd>
-            <dt>Inference saved</dt>
-            <dd>{status.sensing_efficiency != null
-              ? fmtNum(status.sensing_efficiency * 100, 0) + '%' : '—'}</dd>
-          </dl>
-          <p className="stat-sub" style={{ marginTop: 8 }}>
-            Perception runs every bar; the models are only invoked when the
-            agent&rsquo;s own poll schedule calls for it. Looking less often while
-            calm is a decision the agent makes, not an optimisation.
-          </p>
-        </>
-      )}
-    </>
+    <div className="split">
+      <div>
+        <p className="eyebrow" style={{ marginBottom: 10 }}>Cost weights &amp; outcomes</p>
+        <dl className="kv">
+          <dt>Cost of a miss</dt><dd>{fmtNum(cm.miss_base, 0)}</dd>
+          <dt>Cost of a false alarm</dt><dd>{fmtNum(cm.false_base, 1)}</dd>
+          <dt>True positives</dt><dd>{st.true_positives ?? 0}</dd>
+          <dt>False positives</dt><dd>{st.false_positives ?? 0}</dd>
+          <dt>Missed breaches</dt><dd>{st.missed_breaches ?? 0}</dd>
+          <dt>Precision</dt>
+          <dd>{st.precision != null ? fmtNum(st.precision * 100, 1) + '%' : '—'}</dd>
+          <dt>Weight updates</dt><dd>{st.updates ?? 0}</dd>
+        </dl>
+      </div>
+      <div>
+        <p className="eyebrow" style={{ marginBottom: 10 }}>Adaptive sensing</p>
+        <dl className="kv">
+          <dt>Bars perceived</dt><dd>{status?.ticks ?? 0}</dd>
+          <dt>Model invocations</dt><dd>{status?.model_invocations ?? 0}</dd>
+          <dt>Inference saved</dt>
+          <dd>{status?.sensing_efficiency != null
+            ? fmtNum(status.sensing_efficiency * 100, 0) + '%' : '—'}</dd>
+        </dl>
+        <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 12, lineHeight: 1.55 }}>
+          Perception runs every bar; the models are invoked only when the
+          agent&rsquo;s own poll schedule calls for it. Looking less often while
+          calm is a decision the agent makes, not an optimisation applied to it.
+        </p>
+      </div>
+    </div>
   )
 }
 
 /** Closest historical episode to the current market state. */
 export function Analogue({ analogue }) {
   if (!analogue) {
-    return <div className="empty">The agent queries incident memory only once it
-      escalates to WARN or above.</div>
+    return (
+      <div className="empty">
+        Incident memory is queried only once the agent escalates to WARN or above.
+      </div>
+    )
   }
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'baseline', gap: 10 }}>
-        <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{analogue.incident}</strong>
-        <code style={{ fontSize: 11 }}>{analogue.date}</code>
+                    alignItems: 'baseline', gap: 12 }}>
+        <strong style={{ fontSize: 14.5, color: 'var(--ink)' }}>{analogue.incident}</strong>
+        <code style={{ fontSize: 11, color: 'var(--muted)' }}>{analogue.date}</code>
       </div>
-      <div className="stat-sub" style={{ marginTop: 2 }}>
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>
         similarity {fmtNum((analogue.similarity ?? 0) * 100, 0)}% &middot;
         trough ${fmtNum(analogue.trough, 2)}
       </div>
-      <div className="rationale">{analogue.note}</div>
+      <div className="quote">{analogue.note}</div>
     </>
   )
 }

@@ -1,114 +1,173 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
+import { fmtProb, simClock } from '../lib/format.js'
 
 /**
- * Price and probability over simulated time.
+ * Price and depeg probability over simulated time.
  *
- * Hand-rolled SVG rather than a charting library: the dataset is a simple
- * series, and this keeps the dependency list to react + react-dom.
+ * Two measures of very different scale, so they get two stacked panels sharing
+ * one x-axis — never a dual y-axis on one plot.
  *
- * The probability track is log-scaled. The ensemble is precision-tuned with a
- * threshold of 1.8e-3 and moves over roughly one and a half decades, so a
- * linear axis would render the entire run as a flat line on the floor.
+ * The probability panel is log-scaled: the ensemble is precision-tuned around
+ * 1.8e-3 and moves over roughly a decade and a half, which a linear axis would
+ * render as a flat line on the floor.
+ *
+ * Hover gives a crosshair and a tooltip reading both series at that minute.
  */
 
-const ACTION_COLOR = {
-  HOLD: '#8A8171', WATCH: '#9A7F46', WARN: '#8A5A22', CRITICAL: '#7A2E1C',
+const SEV = {
+  HOLD: '#A49C8B', WATCH: '#C58A2E', WARN: '#B2541A', CRITICAL: '#7E2112',
 }
+const INK = '#141210'
+const PROB = '#A1561C'
 
-export default function Chart({ series, threshold }) {
-  const W = 760, H = 150, PH = 92, GAP = 16, PAD = 38
+const W = 860, H = 232
+const PRICE_H = 126, GAP = 20, PAD_L = 8, PAD_R = 58, TOP = 10
 
-  const view = useMemo(() => {
+export default function Chart({ series, threshold, startMinute = 0 }) {
+  const [hover, setHover] = useState(null)
+  const wrapRef = useRef(null)
+
+  const v = useMemo(() => {
     if (!series || series.length < 2) return null
-    const pts = series.slice(-420)
+    const pts = series.slice(-480)
     const n = pts.length
 
     const closes = pts.map(p => p.close)
     let lo = Math.min(...closes), hi = Math.max(...closes)
-    const span = Math.max(hi - lo, 1e-4)
-    lo -= span * 0.12; hi += span * 0.12
+    const span = Math.max(hi - lo, 2e-4)
+    lo -= span * 0.14; hi += span * 0.14
 
     const probs = pts.map(p => Math.max(p.p ?? 1e-6, 1e-6))
-    const logLo = Math.log10(Math.min(...probs, threshold || 1e-3)) - 0.15
-    const logHi = Math.log10(Math.max(...probs, threshold || 1e-3)) + 0.15
+    const lLo = Math.log10(Math.min(...probs, threshold || 1e-3)) - 0.18
+    const lHi = Math.log10(Math.max(...probs, threshold || 1e-3)) + 0.18
 
-    const x = i => PAD + (i / Math.max(n - 1, 1)) * (W - PAD - 10)
-    const yP = v => 8 + (1 - (v - lo) / (hi - lo)) * (PH - 16)
-    const yQ = v => {
-      const t = (Math.log10(Math.max(v, 1e-6)) - logLo) / Math.max(logHi - logLo, 1e-9)
-      return PH + GAP + (1 - t) * (H - PH - GAP - 14)
+    const x = i => PAD_L + (i / Math.max(n - 1, 1)) * (W - PAD_L - PAD_R)
+    const yP = val => TOP + (1 - (val - lo) / (hi - lo)) * (PRICE_H - TOP - 6)
+    const yQ = val => {
+      const t = (Math.log10(Math.max(val, 1e-6)) - lLo) / Math.max(lHi - lLo, 1e-9)
+      return PRICE_H + GAP + (1 - t) * (H - PRICE_H - GAP - 16)
     }
 
-    const pricePath = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${yP(p.close).toFixed(1)}`).join('')
-    const probPath = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${yQ(p.p ?? 1e-6).toFixed(1)}`).join('')
+    const line = (sel, yf) =>
+      pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${yf(sel(p)).toFixed(1)}`).join('')
 
-    // Contiguous runs of the same action, drawn as background bands.
+    // Contiguous runs of the same action -> background bands.
     const bands = []
-    let start = 0
+    let s = 0
     for (let i = 1; i <= n; i++) {
-      if (i === n || pts[i].action !== pts[start].action) {
-        if (pts[start].action !== 'HOLD') {
-          bands.push({ x0: x(start), x1: x(i - 1), action: pts[start].action })
+      if (i === n || pts[i].action !== pts[s].action) {
+        if (pts[s].action && pts[s].action !== 'HOLD') {
+          bands.push({ x0: x(s), x1: x(i - 1), action: pts[s].action })
         }
-        start = i
+        s = i
       }
     }
 
-    return { pts, x, yP, yQ, pricePath, probPath, bands, lo, hi, logLo, logHi,
-             pegY: (lo <= 1 && hi >= 1) ? yP(1) : null,
-             thrY: threshold ? yQ(threshold) : null }
+    return {
+      pts, n, x, yP, yQ, lo, hi,
+      pricePath: line(p => p.close, yP),
+      probPath: line(p => Math.max(p.p ?? 1e-6, 1e-6), yQ),
+      bands,
+      pegY: lo <= 1 && hi >= 1 ? yP(1) : null,
+      thrY: threshold ? yQ(threshold) : null,
+    }
   }, [series, threshold])
 
-  if (!view) {
-    return <div className="empty">Waiting for the feed to warm up — the models need
-      24h of history before the first complete feature vector.</div>
+  if (!v) {
+    return (
+      <div className="empty">
+        Waiting for the feed — the models need 24h of history before the first
+        complete feature vector.
+      </div>
+    )
   }
 
+  const onMove = e => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const px = ((e.clientX - rect.left) / rect.width) * W
+    const frac = (px - PAD_L) / (W - PAD_L - PAD_R)
+    const i = Math.round(frac * (v.n - 1))
+    if (i < 0 || i >= v.n) { setHover(null); return }
+    setHover({ i, left: (v.x(i) / W) * rect.width, pxRight: v.x(i) > W * 0.62 })
+  }
+
+  const hp = hover ? v.pts[hover.i] : null
+
   return (
-    <>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-        {view.bands.map((b, i) => (
+    <div className="chart-wrap" ref={wrapRef}>
+      <svg viewBox={`0 0 ${W} ${H}`} onMouseMove={onMove}
+           onMouseLeave={() => setHover(null)} role="img"
+           aria-label="Price and depeg probability over simulated time">
+
+        {v.bands.map((b, i) => (
           <rect key={i} x={b.x0} y={0} width={Math.max(b.x1 - b.x0, 1)} height={H}
-                fill={ACTION_COLOR[b.action]} opacity={b.action === 'CRITICAL' ? 0.14 : 0.08} />
+                fill={SEV[b.action]} opacity={b.action === 'CRITICAL' ? 0.13 : 0.075} />
         ))}
 
-        {/* price panel */}
-        {view.pegY != null && (
+        {/* ---- price ---- */}
+        {v.pegY != null && (
           <>
-            <line x1={PAD} y1={view.pegY} x2={W - 10} y2={view.pegY}
-                  stroke="#C9BAA2" strokeWidth="1" strokeDasharray="4 3" />
-            <text x={4} y={view.pegY + 3} fontSize="8.5" fill="#7C7161"
-                  fontFamily="JetBrains Mono, monospace">$1.00</text>
+            <line x1={PAD_L} y1={v.pegY} x2={W - PAD_R} y2={v.pegY}
+                  stroke="#D3C5AE" strokeWidth="1" strokeDasharray="3 3" />
+            <text x={W - PAD_R + 7} y={v.pegY + 3.5} fontSize="9.5" fill="#867B6B"
+                  fontFamily="JetBrains Mono, monospace">$1.0000</text>
           </>
         )}
-        <path d={view.pricePath} fill="none" stroke="#14120F" strokeWidth="1.5"
+        <path d={v.pricePath} fill="none" stroke={INK} strokeWidth="1.7"
               strokeLinejoin="round" strokeLinecap="round" />
-        <text x={W - 10} y={12} fontSize="8.5" fill="#7C7161" textAnchor="end"
-              fontFamily="JetBrains Mono, monospace">{view.hi.toFixed(4)}</text>
-        <text x={W - 10} y={PH - 4} fontSize="8.5" fill="#7C7161" textAnchor="end"
-              fontFamily="JetBrains Mono, monospace">{view.lo.toFixed(4)}</text>
+        <text x={W - PAD_R + 7} y={TOP + 4} fontSize="9.5" fill="#867B6B"
+              fontFamily="JetBrains Mono, monospace">{v.hi.toFixed(4)}</text>
+        <text x={W - PAD_R + 7} y={PRICE_H - 4} fontSize="9.5" fill="#867B6B"
+              fontFamily="JetBrains Mono, monospace">{v.lo.toFixed(4)}</text>
 
-        {/* probability panel */}
-        <line x1={PAD} y1={PH + GAP - 7} x2={W - 10} y2={PH + GAP - 7}
-              stroke="#DED2BE" strokeWidth="1" />
-        {view.thrY != null && (
+        {/* ---- probability ---- */}
+        <line x1={PAD_L} y1={PRICE_H + GAP - 9} x2={W - PAD_R} y2={PRICE_H + GAP - 9}
+              stroke="#E4DACA" strokeWidth="1" />
+        {v.thrY != null && (
           <>
-            <line x1={PAD} y1={view.thrY} x2={W - 10} y2={view.thrY}
-                  stroke="#7A2E1C" strokeWidth="1" strokeDasharray="3 3" opacity=".7" />
-            <text x={4} y={view.thrY + 3} fontSize="8" fill="#7A2E1C"
-                  fontFamily="JetBrains Mono, monospace">thr</text>
+            <line x1={PAD_L} y1={v.thrY} x2={W - PAD_R} y2={v.thrY}
+                  stroke="#7E2112" strokeWidth="1" strokeDasharray="3 3" opacity=".65" />
+            <text x={W - PAD_R + 7} y={v.thrY + 3.5} fontSize="9" fill="#7E2112"
+                  fontFamily="JetBrains Mono, monospace">threshold</text>
           </>
         )}
-        <path d={view.probPath} fill="none" stroke="#8A5A22" strokeWidth="1.5"
+        <path d={v.probPath} fill="none" stroke={PROB} strokeWidth="1.7"
               strokeLinejoin="round" strokeLinecap="round" />
+
+        {/* ---- hover crosshair ---- */}
+        {hp && (
+          <g pointerEvents="none">
+            <line x1={v.x(hover.i)} y1={0} x2={v.x(hover.i)} y2={H}
+                  stroke={INK} strokeWidth="1" opacity=".26" />
+            <circle cx={v.x(hover.i)} cy={v.yP(hp.close)} r="4"
+                    fill={INK} stroke="#FDFAF4" strokeWidth="2" />
+            <circle cx={v.x(hover.i)} cy={v.yQ(Math.max(hp.p ?? 1e-6, 1e-6))} r="4"
+                    fill={PROB} stroke="#FDFAF4" strokeWidth="2" />
+          </g>
+        )}
       </svg>
 
-      <div className="legend" style={{ marginTop: 8 }}>
-        <span><i style={{ background: '#14120F' }} />price</span>
-        <span><i style={{ background: '#8A5A22' }} />p(depeg), log scale</span>
-        <span><i style={{ background: '#7A2E1C' }} />decision threshold</span>
-        <span><i style={{ background: 'rgba(138,90,34,.35)' }} />shaded = agent elevated</span>
+      {hp && (
+        <div className="tooltip"
+             style={{
+               left: hover.pxRight ? undefined : hover.left + 14,
+               right: hover.pxRight ? `calc(100% - ${hover.left - 14}px)` : undefined,
+               top: 6,
+             }}>
+          <div className="t-head">{simClock(startMinute + hover.i)} sim</div>
+          <div className="t-row"><span>price</span><b>{hp.close.toFixed(5)}</b></div>
+          <div className="t-row"><span>p(depeg)</span><b>{fmtProb(hp.p)}</b></div>
+          <div className="t-row"><span>stress</span><b>{(hp.stress ?? 0).toFixed(1)}</b></div>
+          <div className="t-row"><span>agent</span><b>{hp.action}</b></div>
+        </div>
+      )}
+
+      <div className="legend">
+        <span><i style={{ background: INK }} />price</span>
+        <span><i style={{ background: PROB }} />p(depeg), log scale</span>
+        <span><i style={{ background: '#7E2112' }} />decision threshold</span>
+        <span><i style={{ background: '#C58A2E', opacity: .5 }} />shaded = agent elevated</span>
       </div>
-    </>
+    </div>
   )
 }

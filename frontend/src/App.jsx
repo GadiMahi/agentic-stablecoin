@@ -1,10 +1,18 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Chart from './components/Chart.jsx'
 import Attention from './components/Attention.jsx'
 import Utility from './components/Utility.jsx'
-import { Alerts, Analogue, Controls, Learning, ToolLog } from './components/Panels.jsx'
+import { Alerts, Analogue, Ensemble, Learning, ToolLog } from './components/Panels.jsx'
 import * as api from './lib/api.js'
-import { fmtCompact, fmtNum, fmtPrice, fmtProb, simClock } from './lib/format.js'
+import { fmtNum, fmtProb, simClock } from './lib/format.js'
+
+const TABS = [
+  ['ensemble', 'Ensemble'],
+  ['alerts', 'Alerts'],
+  ['tools', 'Tool calls'],
+  ['learning', 'Learning'],
+  ['analogue', 'Incident memory'],
+]
 
 export default function App() {
   const [health, setHealth] = useState(null)
@@ -19,9 +27,10 @@ export default function App() {
   const [paused, setPaused] = useState(false)
   const [speed, setSpeed] = useState(30)
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useState('ensemble')
   const wsRef = useRef(null)
 
-  // ---------------------------------------------------------------- bootstrap
+  /* ------------------------------------------------------------ bootstrap */
   useEffect(() => {
     api.getHealth().then(setHealth).catch(() => {})
     api.getScenarios().then(d => setScenarios(d.scenarios)).catch(() => {})
@@ -34,19 +43,14 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  // ------------------------------------------------------------------ socket
+  /* ---------------------------------------------------------------- socket */
   useEffect(() => {
-    let closed = false
-    let retry
-
+    let closed = false, retry
     const connect = () => {
       const ws = new WebSocket(api.wsUrl())
       wsRef.current = ws
       ws.onopen = () => setConnected(true)
-      ws.onclose = () => {
-        setConnected(false)
-        if (!closed) retry = setTimeout(connect, 1500)
-      }
+      ws.onclose = () => { setConnected(false); if (!closed) retry = setTimeout(connect, 1500) }
       ws.onerror = () => ws.close()
       ws.onmessage = ev => {
         let msg
@@ -57,14 +61,11 @@ export default function App() {
           if (d.scored && d.prediction) {
             setSeries(prev => {
               const next = [...prev, {
-                ts: d.ts,
-                close: d.bar.close,
-                p: d.prediction.depeg_proba,
+                ts: d.ts, close: d.bar.close, p: d.prediction.depeg_proba,
                 stress: d.prediction.stress,
-                action: d.decision?.action || 'HOLD',
-                focus: d.focus_intensity,
+                action: d.decision?.action || 'HOLD', focus: d.focus_intensity,
               }]
-              return next.length > 600 ? next.slice(next.length - 600) : next
+              return next.length > 700 ? next.slice(next.length - 700) : next
             })
           }
           if (d.resolved?.length) api.getAlerts().then(r => setAlerts(r.alerts)).catch(() => {})
@@ -78,8 +79,7 @@ export default function App() {
     return () => { closed = true; clearTimeout(retry); wsRef.current?.close() }
   }, [])
 
-  // Periodic reconciliation — the socket carries the fast path, this keeps the
-  // slower aggregates (agent status, alert table) honest.
+  /* Slower aggregates reconciled over REST; the socket carries the fast path. */
   useEffect(() => {
     if (!running) return
     const id = setInterval(() => {
@@ -89,7 +89,7 @@ export default function App() {
     return () => clearInterval(id)
   }, [running])
 
-  // ----------------------------------------------------------------- actions
+  /* --------------------------------------------------------------- actions */
   const start = useCallback(async () => {
     setBusy(true); setSeries([]); setTick(null); setAlerts([])
     try {
@@ -97,9 +97,7 @@ export default function App() {
       setRunning(true); setPaused(false); setStatus(r.status)
     } catch (e) {
       console.error('failed to start session', e)
-    } finally {
-      setBusy(false)
-    }
+    } finally { setBusy(false) }
   }, [selected, speed])
 
   const togglePause = useCallback(async () => {
@@ -113,173 +111,174 @@ export default function App() {
     if (running) api.control('speed', v).catch(() => {})
   }, [running])
 
-  // -------------------------------------------------------------------- view
+  /* ------------------------------------------------------------------ view */
   const pred = tick?.prediction
   const dec = tick?.decision
   const feed = tick?.feed
   const bar = tick?.bar
-  const warm = tick?.warm ?? false
-  const ratio = pred && health
-    ? pred.depeg_proba / health.model.threshold : null
+  const action = dec?.action || 'HOLD'
+  const ratio = pred && health ? pred.depeg_proba / health.model.threshold : null
+  const blurb = useMemo(
+    () => scenarios.find(s => s.key === selected)?.description || '',
+    [scenarios, selected])
+
+  const warming = tick && !tick.warm
 
   return (
-    <div className="app">
-      <header className="masthead">
-        <div className="brand">
-          <h1>SthiraSense</h1>
-          <p>
-            Autonomous early warning for stablecoin depeg risk. The simulator
-            emits raw market bars only — every probability, stress score and
-            decision below is computed live by the trained ensemble and the agent.
-          </p>
-        </div>
-        <div className="masthead-right">
-          <span className={`pill ${connected ? 'live' : 'down'}`}>
-            <i className="dot" />{connected ? 'stream live' : 'disconnected'}
-          </span>
-          {health && (
-            <>
-              <span className="pill">{health.model.n_features} features</span>
-              <span className="pill">{health.model.rf_trees} trees + XGB &rarr; meta</span>
-              <span className="pill">thr {health.model.threshold.toExponential(1)}</span>
-            </>
-          )}
+    <>
+      <header className="topbar">
+        <div className="topbar-in">
+          <h1 className="wordmark">SthiraSense <span>/ depeg early warning</span></h1>
+          <div className="topbar-meta">
+            <span className={`chip ${connected ? 'live' : 'off'}`}>
+              <i className="dot" />{connected ? 'live' : 'offline'}
+            </span>
+            {health && (
+              <>
+                <span className="chip">{health.model.n_features} features</span>
+                <span className="chip">
+                  {health.model.rf_trees} trees + XGB &rarr; meta
+                </span>
+                <span className="chip">thr {health.model.threshold.toExponential(1)}</span>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      <div className="grid main">
-        {/* ------------------------------------------------- left column */}
-        <div className="stack">
-          <section className="card">
-            <div className="card-head">
-              <h2 className="card-title">Market &amp; model response</h2>
-              <span className="card-note">
-                {feed ? `${feed.name} · sim ${simClock(feed.minute)} · ${feed.phase}` : 'idle'}
+      <main className="page">
+        {/* ------------------------------------------------------ controls */}
+        <div className="controlbar">
+          <div className="segmented" role="group" aria-label="Scenario">
+            {scenarios.map(s => (
+              <button key={s.key} aria-pressed={selected === s.key}
+                      onClick={() => setSelected(s.key)}>{s.name}</button>
+            ))}
+          </div>
+          <div className="transport">
+            <button className="btn primary" onClick={start} disabled={busy}>
+              {busy ? 'Warming up…' : running ? 'Restart' : 'Start simulation'}
+            </button>
+            <button className="btn" onClick={togglePause} disabled={!running || busy}>
+              {paused ? 'Resume' : 'Pause'}
+            </button>
+            <label className="speed">
+              speed
+              <input type="range" min="2" max="240" step="2" value={speed}
+                     onChange={e => changeSpeed(Number(e.target.value))} />
+              <b>{speed}&#215; min/s</b>
+            </label>
+          </div>
+        </div>
+        {blurb && <p className="scenario-blurb">{blurb}</p>}
+
+        {/* --------------------------------------------------------- stats */}
+        <section className="section">
+          <div className="stats">
+            <div className="stat">
+              <div className="stat-label">Price</div>
+              <div className="stat-value">{bar ? bar.close.toFixed(5) : '—'}</div>
+              <div className="stat-foot">
+                {bar ? <>deviation <b>{fmtNum(Math.abs(bar.close - 1) * 100, 3)}%</b></> : '—'}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">p(depeg, 24h)</div>
+              <div className="stat-value">{pred ? fmtProb(pred.depeg_proba) : '—'}</div>
+              <div className="stat-foot">
+                {ratio != null ? <><b>{fmtNum(ratio, 1)}&#215;</b> threshold</> : '—'}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Liquidity stress</div>
+              <div className="stat-value">{pred ? fmtNum(pred.stress, 1) : '—'}</div>
+              <div className="stat-foot">{pred ? <b>{pred.stress_band}</b> : '—'}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Agent</div>
+              <div className={`stat-value sev sev-${action}`}>
+                <i className="mark" /><span className="txt">{action}</span>
+              </div>
+              <div className="stat-foot">
+                {tick ? <>re-checking every <b>{tick.poll_interval_s}s</b></> : '—'}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* --------------------------------------------------------- chart */}
+        <section className="section">
+          <div className="panel">
+            <div className="section-head">
+              <p className="eyebrow">Market &amp; model response</p>
+              <span className="note">
+                {feed ? `sim ${simClock(feed.minute)} · ${feed.phase}` : 'idle'}
               </span>
             </div>
-
-            {!warm && tick && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="stat-sub" style={{ marginBottom: 5 }}>
+            {warming ? (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 7 }}>
                   warming up feature windows — {Math.round((tick.warmup_progress || 0) * 100)}%
                 </div>
-                <div className="warmbar">
+                <div className="track">
                   <i style={{ width: `${(tick.warmup_progress || 0) * 100}%` }} />
                 </div>
-              </div>
+              </>
+            ) : (
+              <Chart series={series} threshold={health?.model.threshold} />
             )}
+          </div>
+        </section>
 
-            <div className="grid trio" style={{ marginBottom: 14 }}>
-              <div>
-                <div className="stat-value big">{bar ? fmtPrice(bar.close) : '—'}</div>
-                <div className="stat-sub">
-                  price {bar && `· dev ${fmtNum(Math.abs(bar.close - 1) * 100, 3)}%`}
-                </div>
-              </div>
-              <div>
-                <div className="stat-value big">{pred ? fmtProb(pred.depeg_proba) : '—'}</div>
-                <div className="stat-sub">
-                  p(depeg 24h){ratio != null && ` · ${fmtNum(ratio, 1)}× threshold`}
-                </div>
-              </div>
-              <div>
-                <div className="stat-value big">{pred ? fmtNum(pred.stress, 1) : '—'}</div>
-                <div className="stat-sub">
-                  liquidity stress {pred && `· ${pred.stress_band}`}
-                </div>
-              </div>
-            </div>
-
-            <Chart series={series} threshold={health?.model.threshold} />
-          </section>
-
-          <div className="grid duo">
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">Decision — expected utility</h2>
+        {/* ------------------------------------------------ decision + focus */}
+        <section className="section">
+          <div className="cols">
+            <div className="panel">
+              <div className="section-head">
+                <p className="eyebrow">Decision — expected utility</p>
+                <span className="note">
+                  {dec ? `+${fmtNum(dec.margin, 1)} over runner-up` : ''}
+                </span>
               </div>
               <Utility decision={dec} />
-            </section>
-
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">Ensemble detail</h2>
+            </div>
+            <div className="panel">
+              <div className="section-head">
+                <p className="eyebrow">Agent attention</p>
+                <span className="note">robust z vs 4h</span>
               </div>
-              <dl className="kv">
-                <dt>Random Forest</dt><dd>{pred ? fmtNum(pred.rf_proba, 4) : '—'}</dd>
-                <dt>XGBoost</dt><dd>{pred ? fmtNum(pred.xgb_proba, 4) : '—'}</dd>
-                <dt>Meta-learner output</dt><dd>{pred ? fmtProb(pred.depeg_proba) : '—'}</dd>
-                <dt>Agreement (min)</dt><dd>{pred ? fmtNum(pred.agreement, 4) : '—'}</dd>
-                <dt>Disagreement</dt><dd>{pred ? fmtNum(pred.disagreement, 4) : '—'}</dd>
-                <dt>Past threshold</dt><dd>{pred ? (pred.breach ? 'yes' : 'no') : '—'}</dd>
-              </dl>
-              <div style={{ height: 1, background: 'var(--line)', margin: '12px 0' }} />
-              <dl className="kv">
-                <dt>Volume (1m)</dt><dd>{bar ? fmtCompact(bar.volume) : '—'}</dd>
-                <dt>Trades (1m)</dt><dd>{bar ? fmtNum(bar.trades, 0) : '—'}</dd>
-                <dt>Market cap</dt><dd>{bar ? '$' + fmtCompact(bar.market_cap) : '—'}</dd>
-              </dl>
-            </section>
+              <Attention attention={tick?.attention} intensity={tick?.focus_intensity}
+                         pollInterval={tick?.poll_interval_s} />
+            </div>
           </div>
+        </section>
 
-          <div className="grid duo">
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">Alerts this run</h2>
-                <span className="card-note">{alerts.length} total</span>
-              </div>
-              <Alerts alerts={alerts} />
-            </section>
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">Tool calls</h2>
-              </div>
-              <ToolLog tools={tick?.tools} />
-            </section>
+        {/* ---------------------------------------------------------- tabs */}
+        <section className="section">
+          <div className="tabs" role="tablist">
+            {TABS.map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={tab === k}
+                      onClick={() => setTab(k)}>
+                {label}
+                {k === 'alerts' && alerts.length > 0 ? ` (${alerts.length})` : ''}
+              </button>
+            ))}
           </div>
-        </div>
+          <div className="tabpanel" role="tabpanel">
+            {tab === 'ensemble' && <Ensemble pred={pred} bar={bar} />}
+            {tab === 'alerts' && <Alerts alerts={alerts} />}
+            {tab === 'tools' && <ToolLog tools={tick?.tools} />}
+            {tab === 'learning' && <Learning learning={tick?.learning} status={status} />}
+            {tab === 'analogue' && <Analogue analogue={tick?.analogue} />}
+          </div>
+        </section>
 
-        {/* ------------------------------------------------ right column */}
-        <div className="stack">
-          <section className="card">
-            <div className="card-head">
-              <h2 className="card-title">Simulation</h2>
-            </div>
-            <Controls scenarios={scenarios} selected={selected} onSelect={setSelected}
-                      onStart={start} onPause={togglePause} onSpeed={changeSpeed}
-                      running={running} paused={paused} speed={speed} busy={busy} />
-          </section>
-
-          <section className="card">
-            <div className="card-head">
-              <h2 className="card-title">Agent attention</h2>
-              <span className="card-note">robust z vs 4h baseline</span>
-            </div>
-            <Attention attention={tick?.attention} intensity={tick?.focus_intensity}
-                       pollInterval={tick?.poll_interval_s} />
-          </section>
-
-          <section className="card">
-            <div className="card-head">
-              <h2 className="card-title">Closest historical episode</h2>
-            </div>
-            <Analogue analogue={tick?.analogue} />
-          </section>
-
-          <section className="card">
-            <div className="card-head">
-              <h2 className="card-title">Learning element</h2>
-            </div>
-            <Learning learning={tick?.learning} status={status} />
-          </section>
-        </div>
-      </div>
-
-      <footer className="foot">
-        <span>RF + XGBoost &rarr; logistic meta-learner · 106 features · 24h warm-up</span>
-        <span>Threshold tuned for precision, not accuracy</span>
-        <span>Simulated market data — not investment advice</span>
-      </footer>
-    </div>
+        <footer className="foot">
+          <span>RF + XGBoost &rarr; logistic meta-learner · 106 features · 24h warm-up</span>
+          <span>Threshold tuned for precision, not accuracy</span>
+          <span>Simulated market data — not investment advice</span>
+        </footer>
+      </main>
+    </>
   )
 }
