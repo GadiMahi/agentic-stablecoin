@@ -11,6 +11,10 @@ export const getScenarios = () => fetch('/api/scenarios').then(json)
 export const getStatus    = () => fetch('/api/status').then(json)
 export const getAlerts    = () => fetch('/api/alerts').then(json)
 export const getHistory   = () => fetch('/api/history').then(json)
+export const getNotify    = () => fetch('/api/notify').then(json)
+
+export const testNotify = () =>
+  fetch('/api/notify/test', { method: 'POST' }).then(json)
 
 export const startSession = (scenario, speed, seed = 42) =>
   fetch('/api/session', {

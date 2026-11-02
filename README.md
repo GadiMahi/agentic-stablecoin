@@ -192,6 +192,42 @@ easy to get wrong:
 
 ---
 
+## Automated response
+
+An escalation at WARN or above is dispatched to every configured channel. All
+four are free; unconfigured ones report themselves unconfigured and are skipped,
+never counted as delivered.
+
+| Channel | Setup | Notes |
+|---|---|---|
+| **console** | none | Writes to the service log. Always on. |
+| **browser** | none | Pushed over the open WebSocket; the dashboard raises a real OS notification. Allow notifications when asked. |
+| **webhook** | one env var | Discord or Slack incoming webhook. One payload carries both Discord's `content` and Slack's `text`, so either works. |
+| **email** | four env vars | SMTP. Gmail requires an App Password, not your account password. |
+
+```bash
+export STHIRA_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+export STHIRA_SMTP_HOST=smtp.gmail.com STHIRA_SMTP_PORT=587
+export STHIRA_SMTP_USER=you@gmail.com STHIRA_SMTP_PASS="app password"
+export STHIRA_SMTP_TO=you@gmail.com
+export STHIRA_MIN_LEVEL=WARN          # or CRITICAL
+python run.py
+```
+
+`.env.example` documents every variable. No secret is committed.
+
+The **Response** tab shows which channels are live, a delivery log including
+failures, and a **Send test alert** button that fires a clearly-labelled test
+through every live channel — so the response path can be demonstrated without
+waiting for the market to break.
+
+Delivery is best-effort and runs off the agent's thread. A channel that times
+out or throws records the failure and never propagates into the agent loop: an
+early-warning system that dies because SMTP was slow is worse than one that
+misses an email.
+
+---
+
 ## API
 
 | Method | Path | Purpose |

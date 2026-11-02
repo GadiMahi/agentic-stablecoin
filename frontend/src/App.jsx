@@ -3,6 +3,8 @@ import Chart from './components/Chart.jsx'
 import Attention from './components/Attention.jsx'
 import Utility from './components/Utility.jsx'
 import { Alerts, Analogue, Ensemble, Learning, ToolLog } from './components/Panels.jsx'
+import ResponsePanel from './components/Response.jsx'
+import Toasts from './components/Toasts.jsx'
 import * as api from './lib/api.js'
 import { fmtNum, fmtProb, simClock } from './lib/format.js'
 
@@ -12,6 +14,7 @@ const TABS = [
   ['tools', 'Tool calls'],
   ['learning', 'Learning'],
   ['analogue', 'Incident memory'],
+  ['response', 'Response'],
 ]
 
 export default function App() {
@@ -28,11 +31,14 @@ export default function App() {
   const [speed, setSpeed] = useState(30)
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState('ensemble')
+  const [notifyState, setNotifyState] = useState(null)
+  const [toasts, setToasts] = useState([])
   const wsRef = useRef(null)
 
   /* ------------------------------------------------------------ bootstrap */
   useEffect(() => {
     api.getHealth().then(setHealth).catch(() => {})
+    api.getNotify().then(setNotifyState).catch(() => {})
     api.getScenarios().then(d => setScenarios(d.scenarios)).catch(() => {})
     api.getStatus().then(s => {
       if (s.active) {
@@ -69,6 +75,42 @@ export default function App() {
             })
           }
           if (d.resolved?.length) api.getAlerts().then(r => setAlerts(r.alerts)).catch(() => {})
+        } else if (msg.type === 'notify') {
+          // The server's browser channel reached us. Raise a real OS
+          // notification if the operator has allowed it; the Response tab
+          // records the delivery either way.
+          const n = msg.data
+          const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+          // Logged so a missing banner can be diagnosed without a rebuild.
+          console.info('[sthirasense] notify frame received', { level: n.level, permission: perm })
+
+          // The in-page toast always fires. It needs no permission and cannot be
+          // suppressed by the OS, so it is the dependable surface; the desktop
+          // notification below is an extra for when this tab is not in front.
+          setToasts(prev => [
+            ...prev.slice(-2),
+            { key: `${n.alert_id}-${Date.now()}`, data: n, test: !n.alert_id },
+          ])
+
+          if (perm === 'granted') {
+            try {
+              // A real alert keeps its id as the tag, so repeated dispatches for
+              // the SAME alert collapse into one banner rather than spamming.
+              // Test alerts carry id 0, which would make every test share a tag —
+              // and a same-tagged notification is *replaced silently*, so only the
+              // first would ever be seen. Give those a unique tag instead.
+              new Notification(n.subject, {
+                body: `${n.rationale}`.slice(0, 180),
+                tag: `sthirasense-${n.alert_id || `test-${Date.now()}`}`,
+                renotify: Boolean(n.alert_id),
+              })
+            } catch (err) {
+              console.warn('[sthirasense] could not raise notification', err)
+            }
+          } else {
+            console.warn('[sthirasense] notification suppressed — permission is', perm)
+          }
+          api.getNotify().then(setNotifyState).catch(() => {})
         } else if (msg.type === 'finished') {
           setRunning(false); setStatus(msg.status)
           api.getAlerts().then(r => setAlerts(r.alerts)).catch(() => {})
@@ -85,6 +127,7 @@ export default function App() {
     const id = setInterval(() => {
       api.getStatus().then(s => { if (s.active) setStatus(s.agent) }).catch(() => {})
       api.getAlerts().then(r => setAlerts(r.alerts)).catch(() => {})
+      api.getNotify().then(setNotifyState).catch(() => {})
     }, 4000)
     return () => clearInterval(id)
   }, [running])
@@ -124,8 +167,12 @@ export default function App() {
 
   const warming = tick && !tick.warm
 
+  const dismissToast = useCallback(
+    key => setToasts(prev => prev.filter(t => t.key !== key)), [])
+
   return (
     <>
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
       <header className="topbar">
         <div className="topbar-in">
           <h1 className="wordmark">SthiraSense <span>/ depeg early warning</span></h1>
@@ -140,6 +187,14 @@ export default function App() {
                   {health.model.rf_trees} trees + XGB &rarr; meta
                 </span>
                 <span className="chip">thr {health.model.threshold.toExponential(1)}</span>
+              </>
+            )}
+            {notifyState?.active?.length > 0 && (
+              <>
+                <span className="chip" title="configured response channels">
+                  {notifyState.active.length} channel
+                  {notifyState.active.length === 1 ? '' : 's'}
+                </span>
               </>
             )}
           </div>
@@ -270,6 +325,11 @@ export default function App() {
             {tab === 'tools' && <ToolLog tools={tick?.tools} />}
             {tab === 'learning' && <Learning learning={tick?.learning} status={status} />}
             {tab === 'analogue' && <Analogue analogue={tick?.analogue} />}
+            {tab === 'response' && (
+              <ResponsePanel
+                notifyState={notifyState}
+                onRefresh={() => api.getNotify().then(setNotifyState).catch(() => {})} />
+            )}
           </div>
         </section>
 

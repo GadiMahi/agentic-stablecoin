@@ -33,7 +33,9 @@ from pydantic import BaseModel, Field
 from .agent.agent import DepegAgent
 from .config import ROOT, WARMUP_BARS
 from .models import DepegEnsemble
+from .notify import AlertMessage, NotificationRouter, build_router
 from .sim.engine import MarketFeed
+from .models import band_for as _band
 from .sim.scenarios import SCENARIOS, list_scenarios
 from .store import AuditStore
 
@@ -53,6 +55,19 @@ SESSION: Optional["Session"] = None
 # the set to a session means those sockets are never registered and the live
 # stream silently never reaches them.
 CLIENTS: Set[WebSocket] = set()
+
+# Automated-response layer. Built once; channels read their config from the
+# environment at startup. The browser channel pushes over the same socket set.
+ROUTER: Optional[NotificationRouter] = None
+LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _push_to_browsers(payload: Dict[str, Any]) -> None:
+    """Bridge the router's worker thread back onto the event loop."""
+    if LOOP is None:
+        raise RuntimeError("event loop not ready")
+    asyncio.run_coroutine_threadsafe(
+        broadcast({"type": "notify", "data": payload}), LOOP)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +95,28 @@ class Session:
     def _on_dispatch(self, alert: Dict[str, Any]) -> None:
         if STORE:
             STORE.record_alert(self.run_id, alert, alert.get("analogue"))
+        if ROUTER and ROUTER.should_notify(alert.get("level", "")):
+            ROUTER.dispatch(self._message_for(alert))
+
+    def _message_for(self, alert: Dict[str, Any]) -> AlertMessage:
+        """Build the outbound message from the agent's own state."""
+        feats = self.agent._last_feats or {}
+        price = float(feats.get("close", 1.0))
+        assert ENSEMBLE is not None
+        return AlertMessage(
+            alert_id=int(alert.get("id", 0)),
+            level=str(alert.get("level", "WARN")),
+            probability=float(alert.get("probability", 0.0)),
+            threshold=ENSEMBLE.threshold,
+            stress=float(alert.get("stress", 0.0)),
+            stress_band=str(alert.get("stress_band", "")) or _band(float(alert.get("stress", 0))),
+            price=price,
+            deviation_pct=(price - 1.0) * 100.0,
+            rationale=str(alert.get("rationale", "")),
+            scenario=self.scenario,
+            ts=int(alert.get("opened_ts", 0)),
+            analogue=alert.get("analogue"),
+        )
 
     # ----------------------------------------------------------------- warmup
     def warm_up(self) -> None:
@@ -185,9 +222,13 @@ class ControlRequest(BaseModel):
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 def _startup() -> None:
-    global ENSEMBLE, STORE
+    global ENSEMBLE, STORE, ROUTER, LOOP
     ENSEMBLE = DepegEnsemble()
     STORE = AuditStore()
+    LOOP = asyncio.get_event_loop()
+    ROUTER = build_router(_push_to_browsers)
+    log.info("notification channels active: %s",
+             ", ".join(ROUTER.status()["active"]) or "console only")
     log.info("loaded ensemble: %d features, threshold %.6f",
              len(ENSEMBLE.feature_cols), ENSEMBLE.threshold)
 
@@ -283,6 +324,44 @@ def alerts() -> Dict[str, Any]:
     if SESSION is None or STORE is None:
         return {"alerts": []}
     return {"alerts": STORE.alerts_for(SESSION.run_id)}
+
+
+@app.get("/api/notify")
+def notify_status() -> Dict[str, Any]:
+    """Which response channels are configured, and recent delivery receipts."""
+    if ROUTER is None:
+        return {"channels": [], "active": [], "receipts": [], "min_level": "WARN"}
+    st = ROUTER.status()
+    for c in st["channels"]:
+        if c["name"] == "browser":
+            c["clients"] = len(CLIENTS)
+    return st
+
+
+@app.post("/api/notify/test")
+async def notify_test() -> Dict[str, Any]:
+    """Fire a clearly-labelled test alert through every configured channel.
+
+    Exists so the response layer can be demonstrated on demand rather than by
+    waiting for the market to break.
+    """
+    if ROUTER is None or ENSEMBLE is None:
+        return JSONResponse({"error": "service not ready"}, status_code=503)
+    if isinstance(getattr(ROUTER, "channels", None), list):
+        for c in ROUTER.channels:
+            if c.name == "browser":
+                c.clients = len(CLIENTS)
+    msg = AlertMessage(
+        alert_id=0, level="WARN", probability=2.46e-2,
+        threshold=ENSEMBLE.threshold, stress=70.0, stress_band="HIGH",
+        price=0.91446, deviation_pct=-8.554,
+        rationale="TEST DELIVERY — not a real alert. Sent manually to verify "
+                  "the response channels are wired correctly.",
+        scenario="connectivity test", ts=int(__import__("time").time()),
+    )
+    receipts = await asyncio.to_thread(ROUTER.dispatch, msg, True)
+    return {"ok": all(r.ok for r in receipts) if receipts else False,
+            "receipts": [r.to_dict() for r in receipts]}
 
 
 @app.get("/api/history")
