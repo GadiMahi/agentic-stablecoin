@@ -157,19 +157,24 @@ need no account or key, and CoinGecko works on its free public tier.
 
 Two real sources appear next to the simulations:
 
-- **USDC / SVB, March 2023 (real data)** replays Binance 1-minute bars from
-  10 to 14 March 2023 (UTC), after 24 hours of real warm-up. The first run
-  downloads about 7,200 bars and caches them in `data_cache/`; after that the
-  replay works offline. The pair is USDC/USDT, falling back to USDC/BUSD.
-  CoinGecko's free plans only serve the last 365 days of history, so for this
-  replay supply is held at USDC's pre-event level (about $41B, The Block,
-  8 March 2023) while the market cap still moves with the price.
+- **FDUSD depeg, April 2025 (real data)** replays Binance FDUSD/USDT 1-minute
+  bars from 1 to 5 April 2025 (UTC), after 24 hours of real warm-up. On
+  2 April FDUSD fell to about $0.87 after its issuer was publicly accused of
+  insolvency, and took about 36 hours to recover. The first run downloads about
+  7,200 bars and caches them in `data_cache/`; after that the replay works
+  offline. CoinGecko's free plans only serve the last 365 days of history, so
+  supply is held at the issuer's stated size (about $2.5B) while the market cap
+  still moves with the price.
+  The USDC/SVB depeg of March 2023 cannot be replayed from Binance: its USDC/USDT
+  pair was only listed at 14:00 UTC on 11 March 2023, mid-crisis, so there is no
+  pre-event data to warm up on.
 - **USDC live (Binance + CoinGecko)** warms up on the last 24 hours, then
   hands the agent each new minute as it closes. Supply refreshes every 10 minutes.
 
 ```bash
 python fetch_real_data.py check     # are Binance and CoinGecko reachable right now?
-python fetch_real_data.py replay    # download and cache the March 2023 replay
+python fetch_real_data.py replay    # download and cache the FDUSD April 2025 replay
+python fetch_real_data.py run       # play it through the agent and print its timeline
 ```
 
 Optional: set `COINGECKO_API_KEY` to a free CoinGecko Demo key for a higher
@@ -257,8 +262,8 @@ Stated plainly, because they matter more than the feature list.
 - **Alert outcomes use a fixed 0.5% breach band** for auditability, whereas the
   models' own training target used the volume-adaptive band of Carey (2023).
 - **Real-data caveats.** Prices come from Binance's USDC/USDT pair, so a
-  wobble in USDT also shows up. The March 2023 replay holds supply constant,
-  so the supply-change feature reads zero during that replay.
+  wobble in USDT also shows up. The FDUSD replay holds supply constant, so the
+  supply-change feature reads zero during that replay.
 - Reserve quality and redemption queues are off-chain and invisible to this
   system. It can only ever see the market's *reaction*.
 

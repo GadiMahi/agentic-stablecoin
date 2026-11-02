@@ -13,24 +13,28 @@ from .feeds import LiveFeed, RealSource, ReplayFeed
 from .http import SourceError
 
 REAL_SOURCES: Dict[str, RealSource] = {
-    "real_usdc_svb_2023": RealSource(
-        key="real_usdc_svb_2023",
-        name="USDC / SVB, March 2023 (real data)",
+    # Binance only listed USDC/USDT at 14:00 UTC on 11 March 2023, mid-crisis,
+    # so the USDC/SVB depeg has no pre-event data to warm up on. FDUSD's depeg
+    # is fully covered: FDUSD/USDT has traded on Binance since 2023.
+    "real_fdusd_2025": RealSource(
+        key="real_fdusd_2025",
+        name="FDUSD depeg, April 2025 (real data)",
         description=(
-            "Replay of the real USDC depeg after Silicon Valley Bank failed: Binance "
-            "1-minute bars from 10 to 14 March 2023 (UTC), preceded by 24 hours of "
-            "real warm-up. Downloaded once, then cached for offline use."
+            "Replay of a real depeg: on 2 April 2025 FDUSD fell to about $0.87 after "
+            "its issuer was publicly accused of insolvency, and took about 36 hours "
+            "to recover. Binance FDUSD/USDT 1-minute bars from 1 to 5 April 2025 "
+            "(UTC), after 24 hours of real warm-up. Downloaded once, then cached."
         ),
         kind="replay",
-        symbols=("USDCUSDT", "USDCBUSD"),
-        coin_id="usd-coin",
-        start="2023-03-10T00:00:00Z",
-        end="2023-03-14T00:00:00Z",
+        symbols=("FDUSDUSDT",),
+        coin_id="first-digital-usd",
+        start="2025-04-01T00:00:00Z",
+        end="2025-04-05T00:00:00Z",
         # CoinGecko's free plans only serve the last 365 days. If that history is
-        # unavailable, supply is held at USDC's level just before the event:
-        # "just north of $41 billion on March 8" (The Block, 11 Mar 2023).
-        supply_estimate=41.0e9,
-        supply_note="USDC supply held at ~$41B (The Block, 8 Mar 2023)",
+        # unavailable, supply is held at the issuer's stated size at the time:
+        # "worth $2.5 billion" (First Digital, quoted by Decrypt, 2 Apr 2025).
+        supply_estimate=2.5e9,
+        supply_note="FDUSD supply held at ~$2.5B (First Digital via Decrypt, Apr 2025)",
     ),
     "live_usdc": RealSource(
         key="live_usdc",
