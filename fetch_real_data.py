@@ -17,10 +17,11 @@ import time
 import warnings
 
 from sthirasense.sources import REAL_SOURCES, SourceError, binance, coingecko
-from sthirasense.sources.feeds import CACHE_DIR, ReplayFeed, utc_label
+from sthirasense.sources.feeds import CACHE_DIR, ReplayFeed, iso_to_ts, utc_label
 
 REPLAYS = [k for k, v in REAL_SOURCES.items() if v.kind == "replay"]
 BREACH = 0.005
+CALM_S = 2 * 3600
 
 
 def check() -> int:
@@ -78,15 +79,26 @@ def run(key: str) -> int:
         print(f"FAIL  {e}\n(run `python fetch_real_data.py replay` first)")
         return 1
     agent = DepegAgent(DepegEnsemble(), feed)
+    start = iso_to_ts(REAL_SOURCES[key].start)
     first_level, first_break, low, peak_p, peak_stress = {}, None, None, 0.0, 0.0
+    hold_since, calm_end, warn_after_calm = None, None, None   # calm = 2h+ straight at HOLD
     while (t := agent.tick()) is not None:
-        if feed.warming or not (t.scored and t.prediction and t.decision):
-            if not feed.warming and t.bar and abs(t.bar["close"] - 1) >= BREACH and first_break is None:
+        if t.ts < start or not (t.scored and t.prediction and t.decision):
+            if t.ts >= start and abs(t.bar["close"] - 1) >= BREACH and first_break is None:
                 first_break = (int(t.ts), t.bar["close"])
             continue
         ts, close = int(t.ts), t.bar["close"]
         act = t.decision.action.label
         first_level.setdefault(act, (ts, close, t.prediction.depeg_proba, t.prediction.stress))
+        if first_break is None:
+            if act == "HOLD":
+                hold_since = hold_since or ts
+                if ts - hold_since >= CALM_S:
+                    calm_end, warn_after_calm = ts, None
+            else:
+                hold_since = None
+                if act in ("WARN", "CRITICAL") and calm_end is not None and warn_after_calm is None:
+                    warn_after_calm = ts
         if abs(close - 1) >= BREACH and first_break is None:
             first_break = (ts, close)
         if low is None or t.bar["low"] < low[1]:
@@ -107,10 +119,17 @@ def run(key: str) -> int:
             print(f"  first {lvl:<9}           never")
     if first_break:
         print(f"  price first 0.5% off $1   {utc_label(first_break[0])}   price {first_break[1]:.5f}")
-        warn = first_level.get("WARN") or first_level.get("CRITICAL")
-        if warn:
-            lead = (first_break[0] - warn[0]) / 60
-            print(f"  warning lead time         {lead:+.0f} min  ({'before' if lead > 0 else 'after'} the break)")
+        # Lead time only counts a warning that followed 2h+ of calm at HOLD;
+        # an agent that was elevated from the start has not anticipated anything.
+        if warn_after_calm is not None:
+            lead = (first_break[0] - warn_after_calm) / 60
+            print(f"  warning lead time         {lead:+.0f} min  (fresh WARN after 2h+ calm, before the break)")
+        else:
+            print("  warning lead time         none: the agent never spent 2h calm at HOLD before the")
+            print("                            break, so no fresh warning preceded it")
+        crit = first_level.get("CRITICAL")
+        if crit:
+            print(f"  CRITICAL vs the break     {(crit[0] - first_break[0]) / 60:+.0f} min")
     else:
         print("  price first 0.5% off $1   never")
     if low:
