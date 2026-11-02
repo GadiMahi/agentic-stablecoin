@@ -7,7 +7,7 @@ WebSocket clients.
 
 Endpoints
     GET  /api/health          liveness + model contract summary
-    GET  /api/scenarios       available simulations
+    GET  /api/scenarios       available data sources: simulations, real replays, live
     POST /api/session         start (or restart) a run
     POST /api/session/control pause / resume / speed
     GET  /api/status          current agent status
@@ -34,9 +34,8 @@ from .agent.agent import DepegAgent
 from .config import ROOT, WARMUP_BARS
 from .models import DepegEnsemble
 from .notify import AlertMessage, NotificationRouter, build_router
-from .sim.engine import MarketFeed
 from .models import band_for as _band
-from .sim.scenarios import SCENARIOS, list_scenarios
+from .sources import SourceError, build_feed, is_known, list_sources
 from .store import AuditStore
 
 log = logging.getLogger("sthirasense")
@@ -76,13 +75,14 @@ def _push_to_browsers(payload: Dict[str, Any]) -> None:
 class Session:
     """A running simulation + agent, broadcasting ticks to subscribers."""
 
-    def __init__(self, scenario: str, seed: int, speed: float):
+    def __init__(self, scenario: str, seed: int, speed: float, feed: Any = None):
         assert ENSEMBLE is not None and STORE is not None
         self.scenario = scenario
         self.seed = seed
         self.speed = speed                   # simulated minutes per real second
         self.paused = False
-        self.feed = MarketFeed(scenario, seed=seed)
+        # Simulator, real-data replay or live stream: same raw-bar interface.
+        self.feed = feed if feed is not None else build_feed(scenario, seed)
         self.run_id = STORE.start_run(scenario, seed, ENSEMBLE.threshold)
         self.agent = DepegAgent(ENSEMBLE, self.feed, on_dispatch=self._on_dispatch)
         self.task: Optional[asyncio.Task] = None
@@ -183,6 +183,8 @@ class Session:
 
     async def stop(self) -> None:
         self.finished = True
+        if hasattr(self.feed, "stop"):
+            self.feed.stop()                 # unblocks a live feed waiting for the next minute
         if self.task:
             self.task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -265,19 +267,25 @@ def health() -> Dict[str, Any]:
 
 @app.get("/api/scenarios")
 def scenarios() -> Dict[str, Any]:
-    return {"scenarios": list_scenarios()}
+    return {"scenarios": list_sources()}
 
 
 @app.post("/api/session")
 async def start_session(req: StartRequest) -> Dict[str, Any]:
     global SESSION
-    if req.scenario not in SCENARIOS:
+    if not is_known(req.scenario):
         return JSONResponse({"error": f"unknown scenario {req.scenario!r}"}, status_code=400)
 
     if SESSION:
         await SESSION.stop()
 
-    s = Session(req.scenario, req.seed, req.speed)
+    try:
+        # Real sources download (or read the cache) here, off the event loop.
+        feed = await asyncio.to_thread(build_feed, req.scenario, req.seed)
+    except SourceError as e:
+        log.warning("data source failed: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=502)
+    s = Session(req.scenario, req.seed, req.speed, feed=feed)
     await broadcast({"type": "warming", "scenario": req.scenario})
     await asyncio.to_thread(s.warm_up)
     s.task = asyncio.create_task(s.run())

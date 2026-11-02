@@ -11,3 +11,4 @@ frontend/dist/
 .DS_Store
 data/*.csv
 *.tar.gz
+data_cache/
