@@ -2,7 +2,11 @@
 // service — no numbers are computed or invented in the browser.
 
 const json = async (r) => {
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+  if (!r.ok) {
+    let msg = `${r.status} ${r.statusText}`
+    try { const body = await r.json(); if (body && body.error) msg = body.error } catch { /* not JSON */ }
+    throw new Error(msg)
+  }
   return r.json()
 }
 

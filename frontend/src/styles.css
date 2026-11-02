@@ -113,7 +113,7 @@ body {
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--r-lg); padding: 10px 12px; margin-bottom: 18px;
 }
-.segmented { display: flex; gap: 3px; background: var(--sunk); padding: 3px; border-radius: 9px; }
+.segmented { display: flex; flex-wrap: wrap; gap: 3px; background: var(--sunk); padding: 3px; border-radius: 9px; }
 .segmented button {
   appearance: none; border: 0; cursor: pointer; white-space: nowrap;
   font-family: var(--sans); font-size: 12.5px; font-weight: 600;
@@ -145,6 +145,11 @@ body {
 .scenario-blurb {
   font-size: 12px; color: var(--muted); padding: 0 2px 2px; margin: -6px 0 16px;
   max-width: 88ch;
+}
+.scenario-blurb.error { color: var(--critical); font-weight: 600; }
+.segmented .tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: 5px; font-size: 10px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--card); background: var(--critical); vertical-align: 1px;
 }
 
 /* ------------------------------------------------------------------ stats */

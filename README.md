@@ -37,7 +37,7 @@ This repository runs the genuine pipeline end to end. Specifically:
 Two ways to verify this yourself:
 
 ```bash
-pytest tests/ -q          # 42 tests, no network, ~1 minute
+pytest tests/ -q          # 57 tests, no network, ~1.5 minutes
 python verify_not_faked.py   # adversarial check, prints its reasoning
 ```
 
@@ -144,6 +144,40 @@ keeping every rolling window complete. The dashboard reports this as
 
 ---
 
+## Real market data (Binance + CoinGecko)
+
+Besides the four simulated scenarios, the dashboard can run the agent on real
+market data. Both sources are **free**: Binance's public market-data endpoints
+need no account or key, and CoinGecko works on its free public tier.
+
+| Source | What it provides | Endpoint |
+|---|---|---|
+| Binance | 1-minute OHLC, volume, quote volume, trades, taker buy volume | `GET /api/v3/klines` (falls back to `data-api.binance.vision`) |
+| CoinGecko | Circulating supply and market cap | `GET /coins/markets`, `GET /coins/{id}/market_chart/range` |
+
+Two real sources appear next to the simulations:
+
+- **USDC / SVB, March 2023 (real data)** replays Binance 1-minute bars from
+  10 to 14 March 2023 (UTC), after 24 hours of real warm-up. The first run
+  downloads about 7,200 bars and caches them in `data_cache/`; after that the
+  replay works offline. The pair is USDC/USDT, falling back to USDC/BUSD.
+  CoinGecko's free plans only serve the last 365 days of history, so for this
+  replay supply is held at USDC's pre-event level (about $41B, The Block,
+  8 March 2023) while the market cap still moves with the price.
+- **USDC live (Binance + CoinGecko)** warms up on the last 24 hours, then
+  hands the agent each new minute as it closes. Supply refreshes every 10 minutes.
+
+```bash
+python fetch_real_data.py check     # are Binance and CoinGecko reachable right now?
+python fetch_real_data.py replay    # download and cache the March 2023 replay
+```
+
+Optional: set `COINGECKO_API_KEY` to a free CoinGecko Demo key for a higher
+rate limit. Real feeds emit exactly the same 12 raw fields as the simulator, so
+nothing downstream changes, and they never compute a probability or a decision.
+
+---
+
 ## Scenarios
 
 | Scenario | What it tests |
@@ -222,6 +256,9 @@ Stated plainly, because they matter more than the feature list.
   measured precision or recall figure.
 - **Alert outcomes use a fixed 0.5% breach band** for auditability, whereas the
   models' own training target used the volume-adaptive band of Carey (2023).
+- **Real-data caveats.** Prices come from Binance's USDC/USDT pair, so a
+  wobble in USDT also shows up. The March 2023 replay holds supply constant,
+  so the supply-change feature reads zero during that replay.
 - Reserve quality and redemption queues are off-chain and invisible to this
   system. It can only ever see the market's *reaction*.
 
@@ -239,4 +276,4 @@ Stablecoin Stability*, Kaiko Research (2023). Class imbalance handling follows
 Chawla et al., *SMOTE* (JAIR 16, 2002). The agent taxonomy and PEAS framing
 follow Russell & Norvig, *Artificial Intelligence: A Modern Approach*.
 
-Simulated market data. Not investment advice.
+Simulated and public market data. Not investment advice.

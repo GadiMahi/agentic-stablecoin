@@ -28,6 +28,7 @@ export default function App() {
   const [speed, setSpeed] = useState(30)
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState('ensemble')
+  const [error, setError] = useState(null)
   const wsRef = useRef(null)
 
   /* ------------------------------------------------------------ bootstrap */
@@ -91,12 +92,13 @@ export default function App() {
 
   /* --------------------------------------------------------------- actions */
   const start = useCallback(async () => {
-    setBusy(true); setSeries([]); setTick(null); setAlerts([])
+    setBusy(true); setSeries([]); setTick(null); setAlerts([]); setError(null)
     try {
       const r = await api.startSession(selected, speed)
       setRunning(true); setPaused(false); setStatus(r.status)
     } catch (e) {
       console.error('failed to start session', e)
+      setError(e.message || 'Could not start this data source.')
     } finally { setBusy(false) }
   }, [selected, speed])
 
@@ -152,7 +154,9 @@ export default function App() {
           <div className="segmented" role="group" aria-label="Scenario">
             {scenarios.map(s => (
               <button key={s.key} aria-pressed={selected === s.key}
-                      onClick={() => setSelected(s.key)}>{s.name}</button>
+                      onClick={() => setSelected(s.key)}>
+                {s.name}{s.kind === 'live' && <span className="tag">live</span>}
+              </button>
             ))}
           </div>
           <div className="transport">
@@ -171,6 +175,7 @@ export default function App() {
           </div>
         </div>
         {blurb && <p className="scenario-blurb">{blurb}</p>}
+        {error && <p className="scenario-blurb error" role="alert">{error}</p>}
 
         {/* --------------------------------------------------------- stats */}
         <section className="section">
