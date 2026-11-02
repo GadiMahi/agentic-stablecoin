@@ -73,6 +73,10 @@ Python service.
 
 ## Architecture
 
+![Module architecture: how the service, market feeds, agent, risk models and dashboard connect](docs/architecture.jpg)
+
+*Module map of the repository. The operator starts and controls runs through the HTTP/WebSocket API, which selects a market feed (simulator, Binance replay or live), creates the agent, dispatches alerts and records every run. The agent loop scores the risk models and delegates to its attention, utility, learning and tool modules; the React dashboard renders each part of its reasoning. Generated with [GitDiagram](https://gitdiagram.com/gadimahi/agentic-stablecoin).*
+
 ```
 LAYER 1  PERCEPTION      raw bars: OHLCV, trades, taker flow, market cap, supply
 LAYER 2  FEATURE ENGINE  106 features across 3h / 6h / 12h / 24h rolling windows
